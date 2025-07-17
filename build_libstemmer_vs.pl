@@ -7,6 +7,7 @@ use File::Copy;
 use FindBin;
 use lib $FindBin::Bin;
 use libstemmer_vs_helpers;
+use libstemmer_amalgamation;
 use POSIX qw(strftime);
 
 # Configuration
@@ -126,6 +127,26 @@ my @win_headers = map { my $s = $_; $s =~ s/\//\\/g; $s } @snowball_headers;
 # Add our custom headers to the list
 push @win_headers, "include\\stemmer_exports.h";
 push @win_headers, "include\\build_config.h";
+
+# After processing all source and header files, create amalgamation
+print "\nCreating amalgamation files...\n";
+create_amalgamation($output_dir, \@snowball_sources, \@snowball_headers);
+
+# Create Visual Studio project for amalgamation
+if (-f "$output_dir/amalgamation/libstemmer_amalgamation.c") {
+    print "Creating Visual Studio project for amalgamation...\n";
+    
+    my $vs_version = "14.0"; # Visual Studio 2015
+    my $amal_dir = "$output_dir/amalgamation";
+    
+    my $command = "perl create_vs_project.pl \"libstemmer_amalgamation\" \"$amal_dir\" \"$vs_version\" ";
+    $command .= "\"libstemmer_amalgamation.c\" ";
+    $command .= "\"libstemmer_amalgamation.h\"";
+    
+    print "Executing: $command\n";
+    system($command) == 0 or warn "Failed to create VS project for amalgamation: $?";
+}
+
 
 # Call the helper script to create the VS project files
 my $vs_version = "14.0"; # Visual Studio 2015

@@ -1,0 +1,669 @@
+package libstemmer_amalgamation;
+
+use strict;
+use warnings;
+use Exporter qw(import);
+use File::Path qw(make_path);
+use File::Basename;
+use File::Spec;
+use POSIX qw(strftime);
+
+our @EXPORT = qw(
+    create_amalgamation
+);
+
+# Main function to create amalgamation files
+sub create_amalgamation {
+    my ($output_dir, $snowball_sources, $snowball_headers) = @_;
+
+    print "Creating libstemmer amalgamation files...\n";
+
+    my $amalgamation_dir = "$output_dir/amalgamation";
+    make_path($amalgamation_dir) unless -d $amalgamation_dir;
+
+    # Get current date and time
+    my $timestamp = "2025-07-17 23:36:06";
+    my $username = "user3486788";
+
+    # Collect all headers to include, starting with our explicit list
+    my %all_headers;
+    foreach my $header (@$snowball_headers) {
+        next unless $header =~ /\.h$/;
+        $all_headers{$header} = 1;
+    }
+    
+    # Find additional headers from #include statements
+    print "Scanning for additional headers via #include statements...\n";
+    my %header_includes = scan_includes($output_dir, \%all_headers);
+    
+    # Create amalgamated header file
+    create_amalgamated_header($output_dir, $amalgamation_dir, [keys %all_headers], \%header_includes, $timestamp, $username);
+    
+    # Create amalgamated source file
+    create_amalgamated_source($output_dir, $amalgamation_dir, $snowball_sources, [keys %all_headers], \%header_includes, $timestamp, $username);
+    
+    print "Amalgamation files created in $amalgamation_dir\n";
+    print "  - libstemmer_amalgamation.h - Combined header file\n";
+    print "  - libstemmer_amalgamation.c - Combined source file\n";
+}
+
+# Scan all headers to map their include dependencies
+sub scan_includes {
+    my ($input_dir, $known_headers) = @_;
+    
+    my %header_includes;  # Map of header -> includes it contains
+    my %header_path_map;  # Map of header base name to full path
+    
+    # First, create a mapping of base file names to full paths
+    foreach my $header (keys %$known_headers) {
+        my ($base_name) = basename($header);
+        $header_path_map{$base_name} = $header;
+    }
+    
+    # Now scan each header for includes
+    foreach my $header (keys %$known_headers) {
+        $header_includes{$header} = [];
+        
+        # Read the file
+        open my $in, '<', "$input_dir/$header" or do {
+            print "    WARNING: Could not open $input_dir/$header for scanning: $!\n";
+            next;
+        };
+        
+        while (my $line = <$in>) {
+            if ($line =~ /#include\s+["<]([^">]+)[">]/) {
+                my $include_file = $1;
+                
+                # Skip standard library includes
+                next if $include_file =~ /^</ && $include_file !~ /\.h$/ || 
+                       $include_file eq 'stdio.h' || 
+                       $include_file eq 'stdlib.h' || 
+                       $include_file eq 'string.h' || 
+                       $include_file eq 'stdint.h';
+                
+                # Normalize relative paths
+                if ($include_file =~ /^\.\./ || $include_file =~ /^\.\//) {
+                    my $dir = dirname("$input_dir/$header");
+                    my $normalized = File::Spec->rel2abs($include_file, $dir);
+                    $normalized =~ s/^.*?\/vs_build\///; # Remove output_dir prefix
+                    
+                    # Find if this normalized path exists in our known headers
+                    foreach my $known (keys %$known_headers) {
+                        if (basename($normalized) eq basename($known)) {
+                            push @{$header_includes{$header}}, $known;
+                            last;
+                        }
+                    }
+                } 
+                # Handle direct includes by base name
+                elsif (exists $header_path_map{$include_file}) {
+                    push @{$header_includes{$header}}, $header_path_map{$include_file};
+                }
+                # Handle stem_* files that might be included directly
+                elsif ($include_file =~ /stem_.*\.h$/) {
+                    foreach my $known (keys %$known_headers) {
+                        if (basename($known) eq $include_file) {
+                            push @{$header_includes{$header}}, $known;
+                            last;
+                        }
+                    }
+                }
+            }
+        }
+        close $in;
+    }
+    
+    return %header_includes;
+}
+
+# Create amalgamated header file
+sub create_amalgamated_header {
+    my ($input_dir, $output_dir, $header_files, $header_includes, $timestamp, $username) = @_;
+    
+    print "Creating amalgamated header file...\n";
+    
+    # Open the output file
+    open my $out, '>', "$output_dir/libstemmer_amalgamation.h" 
+        or die "Cannot create amalgamated header file: $!";
+    
+    # Write header
+    print $out <<HEADER;
+/*
+ * libstemmer_amalgamation.h - Combined header file for libstemmer
+ *
+ * This file was automatically generated by the libstemmer amalgamation script.
+ * It contains all the necessary header declarations from the libstemmer project
+ * combined into a single file.
+ *
+ * Generated on: $timestamp
+ * Generated by: $username
+ */
+
+#ifndef LIBSTEMMER_AMALGAMATION_H
+#define LIBSTEMMER_AMALGAMATION_H
+
+/* Standard library includes */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+/* Export definitions */
+#ifdef _WIN32
+  #ifdef BUILDING_LIBSTEMMER
+    #ifdef STEMMER_DYNAMIC
+      /* When building DLL */
+      #define STEMMER_API
+      #define STEMMER_API_PUBLIC __declspec(dllexport)
+    #else
+      /* When building static library */
+      #define STEMMER_API __declspec(dllexport)
+      #define STEMMER_API_PUBLIC __declspec(dllexport)
+    #endif
+  #else
+    /* When consuming the library */
+    #ifdef STEMMER_DYNAMIC
+      #define STEMMER_API
+      #define STEMMER_API_PUBLIC __declspec(dllimport)
+    #else
+      #define STEMMER_API
+      #define STEMMER_API_PUBLIC
+    #endif
+  #endif
+#else
+  /* Non-Windows platforms */
+  #define STEMMER_API
+  #define STEMMER_API_PUBLIC
+#endif
+
+#define BUILDING_LIBSTEMMER
+
+/* Define STEMMER_DYNAMIC when building DLL configurations */
+#if defined(_DLL) || defined(_WINDLL) || defined(_USRDLL)
+#  define STEMMER_DYNAMIC
+#endif
+
+/* C++ extern "C" guard - opening */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+HEADER
+    
+    # Dictionary to track which files we've already included
+    my %included_files;
+    
+    # Keep track of standard includes we've already seen
+    my %std_includes = (
+        'stdio.h' => 1,
+        'stdlib.h' => 1,
+        'string.h' => 1,
+        'stdint.h' => 1
+    );
+    
+    # First include api.h (ensuring it comes before header.h)
+    my @api_headers = grep {/api\.h$/} @$header_files;
+    foreach my $header_file (@api_headers) {
+        process_header_for_amalgamation($input_dir, $header_file, $out, \%included_files, \%std_includes, $header_includes);
+    }
+    
+    # Next include header.h
+    my @header_headers = grep {/header\.h$/} @$header_files;
+    foreach my $header_file (@header_headers) {
+        process_header_for_amalgamation($input_dir, $header_file, $out, \%included_files, \%std_includes, $header_includes);
+    }
+    
+    # Next include libstemmer.h
+    my @libstemmer_headers = grep {/libstemmer\.h$/} @$header_files;
+    foreach my $header_file (@libstemmer_headers) {
+        process_header_for_amalgamation($input_dir, $header_file, $out, \%included_files, \%std_includes, $header_includes);
+    }
+    
+    # Process all stemming algorithm headers
+    my @stem_headers = grep {/stem_.*\.h$/} @$header_files;
+    foreach my $header_file (@stem_headers) {
+        process_header_for_amalgamation($input_dir, $header_file, $out, \%included_files, \%std_includes, $header_includes);
+    }
+    
+    # Process modules.h next if it exists (AFTER stem_*.h files)
+    my @modules_header = grep {/modules\.h$/} @$header_files;
+    foreach my $header_file (@modules_header) {
+        process_header_for_amalgamation($input_dir, $header_file, $out, \%included_files, \%std_includes, $header_includes);
+    }
+    
+    # Process all other headers
+    foreach my $header_file (@$header_files) {
+        next if grep {$header_file eq $_} (@api_headers, @header_headers, @libstemmer_headers, @modules_header, @stem_headers);
+        next if $header_file !~ /\.h$/; # Skip non-header files
+        process_header_for_amalgamation($input_dir, $header_file, $out, \%included_files, \%std_includes, $header_includes);
+    }
+    
+    # Write footer with C++ guard closing
+    print $out <<FOOTER;
+
+/* C++ extern "C" guard - closing */
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* LIBSTEMMER_AMALGAMATION_H */
+FOOTER
+    
+    close $out;
+    print "Created amalgamated header file successfully\n";
+}
+
+# Process a header file for inclusion in the amalgamation
+sub process_header_for_amalgamation {
+    my ($input_dir, $header_file, $out_fh, $included_files, $std_includes, $header_includes) = @_;
+    
+    # Skip if we've already included this file
+    return if $included_files->{$header_file};
+    $included_files->{$header_file} = 1;
+    
+    print "  Including header: $header_file\n";
+    
+    # Read the file
+    open my $in, '<', "$input_dir/$header_file" or do {
+        print "    WARNING: Could not open $input_dir/$header_file: $!\n";
+        return;
+    };
+    my $content = do { local $/; <$in> };
+    close $in;
+    
+    # Extract the base name without extension
+    my ($base_name, $dir) = fileparse($header_file, qr/\.[^.]*/);
+    
+    # Determine if it's a stemming algorithm header
+    my $is_stemming_algorithm = ($header_file =~ /stem_.*\.h$/ || $dir =~ /src_c\// || $dir =~ /algorithms\//);
+    
+    print $out_fh "\n/* From $header_file */\n";
+    
+    # Save any C++ extern "C" declarations
+    my $has_cpp_extern_begin = ($content =~ /#ifdef\s+__cplusplus.*?extern\s+"C"\s*\{/s);
+    my $has_cpp_extern_end = ($content =~ /#ifdef\s+__cplusplus.*?}.*?#endif/s);
+    
+    # Remove ONLY include guards, but preserve C++ extern "C" blocks
+    # First extract all #ifdef, #ifndef, #endif blocks to analyze
+    my @ifdefs = $content =~ /(#if(?:n?def)?\s+[^{]+?#endif)/gs;
+    
+    foreach my $block (@ifdefs) {
+        # Skip if this is a C++ extern block
+        next if $block =~ /__cplusplus/;
+        
+        # If it looks like an include guard (at the start/end of file, surrounds most content)
+        if ($block =~ /#ifndef\s+(\w+)\s+#define\s+\1\b/ ||
+            $block =~ /#if\s+!defined\(\s*(\w+)\s*\)\s+#define\s+\1\b/) {
+            # Remove this include guard block
+            my $guard = $1;
+            $content =~ s/#ifndef\s+$guard\s+#define\s+$guard\s+//;
+            $content =~ s/#if\s+!defined\(\s*$guard\s*\)\s+#define\s+$guard\s+//;
+            $content =~ s/#endif\s*\/\*\s*$guard\s*\*\/\s*$//;
+            $content =~ s/#endif\s*\/\*\s*!\s*$guard\s*\*\/\s*$//;
+            $content =~ s/#endif\s*\/\*\s*\w+\s*\*\/\s*$//; # Sometimes the guard in comment doesn't match
+            $content =~ s/#endif\s*$//; # Simple endif at end of file
+        }
+    }
+    
+    # Ensure we have proper closing #endif for C++ extern "C" if needed
+    if ($has_cpp_extern_begin && !$has_cpp_extern_end) {
+        if ($content !~ /#ifdef\s+__cplusplus.*?}.*?#endif/s) {
+            $content .= "\n#ifdef __cplusplus\n}\n#endif\n";
+        }
+    }
+    
+    # Process and remove include statements
+    my @lines = split(/\n/, $content);
+    my @processed_lines;
+    
+    # Special handling for modules.h - comment out ALL stem_*.h includes
+    my $is_modules_h = ($header_file =~ /modules\.h$/);
+    
+    foreach my $line (@lines) {
+        # Handle include statements
+        if ($line =~ /#include\s+["<]([^">]+)[">]/) {
+            my $included_file = $1;
+            
+            # For modules.h, comment out all stem_*.h includes
+            if ($is_modules_h && $included_file =~ /stem_.*\.h$/) {
+                # Fix for nested comments: replace any existing /* */ with // style comments
+                $line =~ s|/\*|//|g;
+                $line =~ s|\*/||g;
+                push @processed_lines, "// $line - stem header already included in amalgamation";
+                next;
+            }
+            
+            # Comment out internal includes - FIX: avoid nested comments
+            if ($included_file =~ /\.h$/ && 
+                ($included_file !~ /^</ || 
+                 $included_file =~ /stem_/ || 
+                 $included_file =~ /\//) # Relative path includes
+                ) {
+                # Fix for nested comments: replace any existing /* */ with // style comments
+                $line =~ s|/\*|//|g;
+                $line =~ s|\*/||g;
+                push @processed_lines, "// $line - amalgamated";
+                next;
+            }
+            
+            # Skip standard includes we've already seen
+            if ($std_includes->{$included_file}) {
+                # Fix for nested comments
+                $line =~ s|/\*|//|g;
+                $line =~ s|\*/||g;
+                push @processed_lines, "// $line - already included";
+                next;
+            }
+            
+            # Mark standard includes as seen
+            $std_includes->{$included_file} = 1;
+        }
+        
+        push @processed_lines, $line;
+    }
+    
+    $content = join("\n", @processed_lines);
+    
+    # If it's a stemming algorithm, rename global variables and functions to avoid conflicts
+    if ($is_stemming_algorithm) {
+        # Extract the language and encoding if possible
+        my $prefix = $base_name;
+        if ($header_file =~ /stem_(.+?)_(.+?)\./) {
+            my $encoding = $1;
+            my $language = $2;
+            $prefix = "${encoding}_${language}";
+        }
+        
+        # Rename global variables and functions by adding prefix
+        $content = rename_identifiers($content, $prefix);
+    }
+    
+    # Write the processed content
+    print $out_fh $content;
+    print $out_fh "\n";
+}
+
+# Create amalgamated source file
+sub create_amalgamated_source {
+    my ($input_dir, $output_dir, $source_files, $header_files, $header_includes, $timestamp, $username) = @_;
+    
+    print "Creating amalgamated source file...\n";
+    
+    # Open the output file
+    open my $out, '>', "$output_dir/libstemmer_amalgamation.c" 
+        or die "Cannot create amalgamated source file: $!";
+    
+    # Write header
+    print $out <<HEADER;
+/*
+ * libstemmer_amalgamation.c - Combined source file for libstemmer
+ *
+ * This file was automatically generated by the libstemmer amalgamation script.
+ * It contains all the necessary source code from the libstemmer project
+ * combined into a single file.
+ *
+ * Generated on: $timestamp
+ * Generated by: $username
+ */
+
+#include "libstemmer_amalgamation.h"
+
+HEADER
+    
+    # Dictionary to track which files we've already included
+    my %included_files = ();
+    
+    # Process main source files first (api.c, libstemmer.c, utilities.c)
+    my @primary_sources = grep {/api\.c$/ || /libstemmer\.c$/ || /utilities\.c$/} @$source_files;
+    foreach my $source_file (@primary_sources) {
+        process_source_for_amalgamation($input_dir, $source_file, $out, \%included_files);
+    }
+    
+    # Process all stemming algorithm sources
+    my @stem_sources = grep {/stem_.*\.c$/} @$source_files;
+    foreach my $source_file (@stem_sources) {
+        process_source_for_amalgamation($input_dir, $source_file, $out, \%included_files);
+    }
+    
+    # Process all other source files
+    foreach my $source_file (@$source_files) {
+        next if grep {$source_file eq $_} (@primary_sources, @stem_sources);
+        next if $source_file !~ /\.c$/; # Skip non-source files
+        process_source_for_amalgamation($input_dir, $source_file, $out, \%included_files);
+    }
+    
+    close $out;
+    print "Created amalgamated source file successfully\n";
+}
+
+# Process a source file for inclusion in the amalgamation
+sub process_source_for_amalgamation {
+    my ($input_dir, $source_file, $out_fh, $included_files) = @_;
+    
+    # Skip if we've already included this file
+    return if $included_files->{$source_file};
+    $included_files->{$source_file} = 1;
+    
+    print "  Including source: $source_file\n";
+    
+    # Read the file
+    open my $in, '<', "$input_dir/$source_file" or do {
+        print "    WARNING: Could not open $input_dir/$source_file: $!\n";
+        return;
+    };
+    my $content = do { local $/; <$in> };
+    close $in;
+    
+    # Extract the base name without extension
+    my ($base_name, $dir) = fileparse($source_file, qr/\.[^.]*/);
+    
+    # Determine if it's a stemming algorithm source
+    my $is_stemming_algorithm = ($source_file =~ /stem_.*\.c$/ || $dir =~ /src_c\// || $dir =~ /algorithms\//);
+    
+    print $out_fh "\n/* From $source_file */\n";
+    
+    # Process includes
+    my @lines = split(/\n/, $content);
+    my @processed_lines;
+    my $has_amalgamation_include = 0;
+    
+    foreach my $line (@lines) {
+        # Handle include statements
+        if ($line =~ /#include\s+["<]([^">]+)[">]/) {
+            my $included_file = $1;
+            
+            # Replace first internal include with our amalgamated header
+            if ($included_file =~ /\.h$/ && 
+                !$has_amalgamation_include &&
+                ($included_file !~ /^</ || 
+                 $included_file =~ /\.\./ || # Relative path
+                 $included_file =~ /stem_/ || 
+                 $included_file =~ /libstemmer/ || 
+                 $included_file =~ /header\.h/ || 
+                 $included_file =~ /api\.h/)
+                ) {
+                push @processed_lines, "#include \"libstemmer_amalgamation.h\" /* Amalgamated header */";
+                $has_amalgamation_include = 1;
+                next;
+            }
+            
+            # Comment out other internal includes - FIX: avoid nested comments
+            if ($included_file =~ /\.h$/ && 
+                ($included_file !~ /^</ || 
+                 $included_file =~ /\.\./ || # Relative path
+                 $included_file =~ /stem_/ || 
+                 $included_file =~ /libstemmer/ || 
+                 $included_file =~ /header\.h/ || 
+                 $included_file =~ /api\.h/)
+                ) {
+                # Fix for nested comments: replace any existing /* */ with // style comments
+                $line =~ s|/\*|//|g;
+                $line =~ s|\*/||g;
+                push @processed_lines, "// $line - amalgamated";
+                next;
+            }
+        }
+        
+        push @processed_lines, $line;
+    }
+    
+    # Add amalgamation include if we haven't done so yet
+    if (!$has_amalgamation_include) {
+        unshift @processed_lines, "#include \"libstemmer_amalgamation.h\" /* Amalgamated header */";
+    }
+    
+    $content = join("\n", @processed_lines);
+    
+    # If it's a stemming algorithm, rename global variables and functions to avoid conflicts
+    if ($is_stemming_algorithm) {
+        # Extract the language and encoding if possible
+        my $prefix = $base_name;
+        if ($source_file =~ /stem_(.+?)_(.+?)\./) {
+            my $encoding = $1;
+            my $language = $2;
+            $prefix = "${encoding}_${language}";
+        }
+        
+        # Rename global variables and functions by adding prefix
+        $content = rename_identifiers($content, $prefix);
+    }
+    
+    # Write the processed content
+    print $out_fh $content;
+    print $out_fh "\n";
+}
+
+# Completely rewritten function to rename identifiers with a more direct approach
+sub rename_identifiers {
+    my ($content, $prefix) = @_;
+    
+    # Store all identifiers that need renaming
+    my %to_rename;
+    
+    # First pass: Identify all global variables with g_ prefix
+    my @g_vars = $content =~ /\bstatic\s+(?:const\s+)?(?:unsigned\s+)?(?:struct\s+\w+|int|char|symbol)\s+(g_\w+)\b/g;
+    
+    foreach my $var_name (@g_vars) {
+        $to_rename{$var_name} = "${prefix}_$var_name";
+        print "  Found global variable: $var_name -> ${prefix}_${var_name}\n";
+    }
+    
+    # Also add all the global variables from the error log
+    my @known_globals = qw(
+        g_AEI g_AEIO g_AEIOU g_aeo g_aou g_c g_C g_ca g_CG g_consonant
+        g_digit g_E g_elision_char g_et_ending g_GI g_keep_with_s g_KI
+        g_niked g_ost_ending g_oux_ending g_particle_end g_rg g_RV g_sa
+        g_st_ending g_s_ending g_U g_v g_V1 g_V2 g_valid_LI g_vowel
+        g_vowel1 g_vowel2 g_vowel3 g_vowel4 g_vowel5 g_vowel6
+        g_v_I g_v_j g_v_WX g_v_WXY
+    );
+    
+    foreach my $var_name (@known_globals) {
+        $to_rename{$var_name} = "${prefix}_$var_name";
+    }
+    
+    # Second pass: Find all state machine variables (s_X_Y)
+    my @s_vars = $content =~ /\b(s_\d+_\d+)\b/g;
+    
+    foreach my $var_name (@s_vars) {
+        $to_rename{$var_name} = "${prefix}_$var_name";
+        print "  Found state variable: $var_name -> ${prefix}_${var_name}\n";
+    }
+    
+    # Add specific problem s_X_Y variables from error log
+    my @known_s_vars = qw(
+        s_0 s_1_0 s_1_1 s_2_0 s_3_0 s_4_0 s_5_0 s_5_1 s_6_0 s_6_1 s_7_0 
+        s_8_0 s_9_0 s_9_1 s_11_0
+    );
+    
+    foreach my $var_name (@known_s_vars) {
+        $to_rename{$var_name} = "${prefix}_$var_name";
+    }
+    
+    # Third pass: Find all function definitions in the form "int r_XXX(SN_env *z)"
+    my @func_definitions = $content =~ /\b(?:static\s+)?(?:int|void)\s+(r_\w+)\s*\(\s*SN_env\s*\*\s*[zZ]\s*[,\)]/g;
+    
+    # Add all found functions to the rename map
+    foreach my $func_name (@func_definitions) {
+        $to_rename{$func_name} = "${prefix}_$func_name";
+        print "  Found function: $func_name -> ${prefix}_${func_name}\n";
+    }
+    
+    # Add all functions from the error log
+    my @known_funcs = qw(
+        r_mark_regions r_R2 r_RV r_R1 r_aditzak r_izenak
+        r_adjetiboak r_cleaning r_attached_pronoun r_standard_suffix
+        r_verb_suffix r_residual_suffix r_main_suffix r_consonant_pair
+        r_other_suffix r_undouble r_V r_VX r_C r_lengthen_V
+        r_Step_1 r_Step_2 r_Step_3 r_Step_4 r_Step_5 r_Step_6
+        r_Step_7 r_Step_1c r_Lose_prefix r_Lose_infix r_measure
+        r_prelude r_postlude r_e_ending r_en_ending r_shortv
+        r_Step_1a r_Step_1b r_exception1 r_verb
+        r_case_ending r_i_plural r_particle_etc r_possessive
+        r_LONG r_VI r_other_endings r_t_plural r_tidy
+        r_elisions r_i_verb_suffix r_un_double r_un_accent
+        r_v_ending r_double r_instrum r_case r_case_special
+        r_case_other r_factive r_plural r_owned r_sing_owner
+        r_plur_owner r_remove_particle r_remove_possessive_pronoun
+        r_SUFFIX_KAN_OK r_SUFFIX_AN_OK r_SUFFIX_I_OK r_remove_suffix
+        r_VOWEL r_KER r_remove_first_order_prefix r_remove_second_order_prefix
+        r_initial_morph r_noun_sfx r_deriv r_verb_sfx
+        r_vowel_suffix r_Step_5a r_Step_5b r_residual_form
+        r_adjective r_noun r_perfective_gerund r_adjectival
+        r_reflexive r_derivational r_tidy_up r_y_verb_suffix
+        r_et_condition r_has_min_length
+    );
+    
+    foreach my $func_name (@known_funcs) {
+        $to_rename{$func_name} = "${prefix}_$func_name";
+    }
+    
+    # Fourth pass: Other static/global variables
+    my @static_vars = $content =~ /static\s+(?:const\s+)?(?:struct\s+\w+|int|char|symbol)\s+(\w+)(?:\s*\[|\s*=|\s*;)/g;
+    foreach my $var_name (@static_vars) {
+        # Skip if it's already in our list or already prefixed
+        next if exists $to_rename{$var_name} || $var_name =~ /^${prefix}_/;
+        
+        # Skip if it's indented (likely a local variable)
+        next if $content =~ /\n\s+static\s+(?:const\s+)?(?:struct\s+\w+|int|char|symbol)\s+\b$var_name\b/;
+        
+        $to_rename{$var_name} = "${prefix}_$var_name";
+        print "  Found other static var: $var_name -> ${prefix}_${var_name}\n";
+    }
+    
+    # Now perform all renames in a single pass
+    # Sort by length (descending) to avoid partial replacements
+    my @sorted_names = sort { length($b) <=> length($a) } keys %to_rename;
+    
+    foreach my $name (@sorted_names) {
+        my $new_name = $to_rename{$name};
+        
+        # Print when actually renaming
+        if ($content =~ /\b$name\b/) {
+            print "  Renaming: $name -> $new_name\n";
+        }
+        
+        # Special handling for s_X_Y variables - these might be in declarations or literals
+        if ($name =~ /^s_\d+_\d+$/) {
+            # Find declarations and array initializations
+            $content =~ s/(static\s+(?:const\s+)?(?:struct\s+\w+|int|char|symbol)\s+)($name)(\s*(?:\[|\=|\;))/$1$new_name$3/g;
+            $content =~ s/(\[\s*)($name)(\s*\])/$1$new_name$3/g; 
+        }
+        # For g_ variables
+        elsif ($name =~ /^g_/) {
+            # For global variables
+            $content =~ s/(\bstatic\s+(?:const\s+)?(?:unsigned\s+)?(?:struct\s+\w+|int|char|symbol)\s+)($name)\b/$1$new_name/g;
+        }
+        elsif ($name =~ /^r_/) {
+            # For functions
+            $content =~ s/(\b(?:static\s+)?(?:int|void)\s+)($name)(\s*\()/$1$new_name$3/g;
+        }
+        
+        # Rename all other references - use word boundary to avoid partial matches
+        $content =~ s/\b$name\b/$new_name/g;
+    }
+    
+    return $content;
+}
+
+1;

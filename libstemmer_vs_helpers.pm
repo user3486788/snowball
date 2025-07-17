@@ -415,28 +415,7 @@ sub process_api_c {
         $content =~ s/static\s+const\s+struct\s+SN_env\s+default_SN_env\s+=\s+\{\};/static const struct SN_env default_SN_env = {0}; \/* Fixed for Visual Studio *\//g;
         $found_empty_struct = 1;
     }
-    
-    # Replace find_among function implementation
-    my $found_find_among = 0;
-    if ($content =~ /int\s+find_among\s*\(/) {
-        $content =~ s/int\s+find_among\s*\(/int find_among_impl\(/g;
-        $found_find_among = 1;
-    }
-    
-    # Replace find_among_b function implementation
-    my $found_find_among_b = 0;
-    if ($content =~ /int\s+find_among_b\s*\(/) {
-        $content =~ s/int\s+find_among_b\s*\(/int find_among_b_impl\(/g;
-        $found_find_among_b = 1;
-    }
-    
-    # Fix parameter types in function definitions
-    $content =~ s/\bint\s+\(\*call_among_func\)\(struct\s+SN_env\*\)/intptr_t f/g;
-    
-    # Fix function pointer calls
-    $content =~ s/if\s*\(call_among_func\(z\)\)/if \(\(\(int \(\*\)\(struct SN_env\*\)\)f\)\(z\)\)/g;
-    $content =~ s/v\[i\]\.function\(z\)/\(\(int \(\*\)\(struct SN_env \*\)\)v\[i\].function\)\(z\)/g;
-    
+        
     # Write the modified content to the output file
     open my $out, '>', "$output_dir/$api_c_file" or die "Cannot create $output_dir/$api_c_file: $!";
     print $out $content;
@@ -445,18 +424,6 @@ sub process_api_c {
     # Report on what was found and modified
     if ($found_empty_struct) {
         print "  Fixed empty struct initialization\n";
-    }
-    
-    if ($found_find_among) {
-        print "  Renamed find_among to find_among_impl\n";
-    } else {
-        print "  WARNING: Could not find find_among implementation\n";
-    }
-    
-    if ($found_find_among_b) {
-        print "  Renamed find_among_b to find_among_b_impl\n";
-    } else {
-        print "  WARNING: Could not find find_among_b implementation\n";
     }
     
     print "Successfully processed $api_c_file\n";
