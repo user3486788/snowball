@@ -1,3 +1,35 @@
+**This repository contains the original Snowball project code with a set of Perl scripts to simplify the use of libstemmer library in Visual Studio/Delphi/CBuilder projects.**
+=================
+
+*build_libstemmer.pl*
+
+main script it serves as the primary entry point for creating ready-to-use project files (and sources) from the original Snowball source code.
+
+- Parses the Snowball mkinc.mak file to extract source and header file lists
+- Creates an organized directory structure for the generated files
+- Copies all header and source files and applies necessary modifications for both Visual Studio and C++ Builder compatibility
+- Generates export declarations and platform-specific build configurations
+- Creates amalgamated source files by combining all individual files
+- generate Visual Studio/C++ Builder project files
+
+*libstemmer_amalgamation.pm*
+
+provides functionality to create amalgamated (combined) source and header files from prepared Snowball stemming library source code. It merges multiple source and header files into single files for simplified distribution and usage.
+
+*libstemmer_vs_helpers.pm*
+
+provides helper functions to adapt the Snowball stemming library for Visual Studio projects. The module works in tandem with the main build script to prepare the Snowball stemming library source code for compilation with Visual Studio, addressing Microsoft-specific requirements and conventions while preserving the library's functionality.
+
+*create_vs_project.pl*
+
+script generates Visual Studio project files for the libstemmer library. It creates the necessary solution and project files to compile the Snowball stemming library with Microsoft Visual Studio.
+
+*create_cb_project.pl*
+
+generates C++ Builder project files for the libstemmer amalgamation. It creates the necessary MSBuild-style project files to compile the amalgamated sources with Embarcadero C++ Builder.
+
+=================
+
 Snowball is a small string processing language for creating stemming algorithms
 for use in Information Retrieval, plus a collection of stemming algorithms
 implemented using it.
