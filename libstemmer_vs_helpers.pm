@@ -145,9 +145,13 @@ sub process_runtime_header {
     # Add macros for function calls with 3 parameters
     if ($content !~ /#define\s+find_among\(/) {
         my $macros = "/* Macros to handle the optional parameter in find_among functions */\n";
-        $macros .= "#ifdef _MSC_VER\n";
+        $macros .= "#if defined(_MSC_VER) || defined(__BORLANDC__)\n";
         $macros .= "#define find_among(a,b,c) find_among_impl(a,b,c,0)\n";
         $macros .= "#define find_among_b(a,b,c) find_among_b_impl(a,b,c,0)\n";
+        $macros .= "#endif\n\n";
+        
+        $macros .= "#if defined(__BORLANDC__)\n";
+        $macros .= "#pragma warn -8066 // disable unreachable code warning for C++ Builder\n";
         $macros .= "#endif\n\n";
         
         # Find a good place to insert the macros
